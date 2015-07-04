@@ -1,0 +1,13 @@
+[package]
+name = "waifu2x-hsa"
+version = "0.1.0"
+license = "MIT"
+authors = ["Kazuki Oikawa <k@oikw.org>"]
+
+[dependencies]
+getopts = "*"
+image = "*"
+rustc-serialize = "*"
+
+[dependencies.hsa]
+git = "https://github.com/kazuki/rust-hsa.git"
