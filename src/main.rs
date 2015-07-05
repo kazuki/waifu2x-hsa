@@ -1,6 +1,7 @@
 extern crate getopts;
 extern crate rustc_serialize;
 extern crate image as piston_image;
+extern crate time;
 
 use std::str::FromStr;
 use std::path::Path;
@@ -71,17 +72,26 @@ fn main() {
     let scale_model = Box::new(model::load_model(&scale_model_path).unwrap());
     let noise_model = Box::new(model::load_model(&noise_model_path).unwrap());
 
+    let mut perf = PerfStatus {
+        cnn_flo: 0,
+        cnn_time: 0.0,
+        other_time: 0.0,
+    };
+
+    let start = time::precise_time_s();
+    let src_img = image::Image::from_dynamic_image(&img);
+    perf.other_time += time::precise_time_s() - start;
+
     let out_img = match method.as_ref() {
         "scale" => {
-            scale2(image::Image::from_dynamic_image(&img, scale_model.len(), 1), &scale_model)
+            scale2(src_img, &scale_model, &mut perf)
         },
         "noise" => {
-            filter(image::Image::from_dynamic_image(&img, noise_model.len(), 1), &noise_model)
+            filter(src_img, &noise_model, &mut perf)
         },
         "noise_scale" => {
-            let mut tmp = image::Image::from_dynamic_image(&img, noise_model.len() + scale_model.len(), 1);
-            tmp = filter(tmp, &noise_model);
-            scale2(tmp, &scale_model)
+            let tmp = filter(src_img, &noise_model, &mut perf);
+            scale2(tmp, &scale_model, &mut perf)
         },
         _ => {
             panic!("unknown method \"{}\"", method);
@@ -90,56 +100,42 @@ fn main() {
 
     let mut out_strm = File::create(&out_path).unwrap();
     out_img.to_dynamic_image().save(&mut out_strm, out_img_format).unwrap();
+
+    println!("total: {:.2} [ms]", perf.other_time * 1000.0);
+    println!("cnn: {:.2} [GFLOPS], {:.2} [ms]",
+             (perf.cnn_flo as f64) / 1000000000.0 / perf.cnn_time,
+             perf.cnn_time * 1000.0);
 }
 
-fn scale2(mut img: image::Image, model: &model::Model) -> image::Image {
-    img = img.scale2x(model.len(), 1);
-    filter(img, &model)
+fn scale2(img: image::Image, model: &model::Model, perf: &mut PerfStatus) -> image::Image {
+    let start = time::precise_time_s();
+    let tmp = img.scale2x();
+    perf.other_time += time::precise_time_s() - start;
+
+    filter(tmp, &model, perf)
 }
 
-fn filter(mut img: image::Image, model: &model::Model) -> image::Image {
+fn filter(mut img: image::Image, model: &model::Model, perf: &mut PerfStatus) -> image::Image {
+    let mut start = time::precise_time_s();
     if model[0].nInputPlane == 1 && img.color_space != image::ColorSpace::I444 {
         img.change_colorspace(image::ColorSpace::I444);
     }
+    let padded = img.add_padding(model.len());
+    perf.other_time += time::precise_time_s() - start;
 
-    img.fill_padding_area();
+    start = time::precise_time_s();
+    let mut output = cnn::filter_cpu(padded, &model, perf);
+    perf.cnn_time += time::precise_time_s() - start;
 
-    let mut copy_components = Vec::new();
-    if model.last().unwrap().nOutputPlane != 3 {
-        for i in model.last().unwrap().nOutputPlane..3 {
-            copy_components.push(img.data[i as usize].clone());
-        }
+    if output.data.len() == 1 {
+        start = time::precise_time_s();
+        output.data.push(img.data[1].clone());
+        output.data.push(img.data[2].clone());
+        output.strides.push(img.strides[1]);
+        output.strides.push(img.strides[2]);
+        perf.other_time += time::precise_time_s() - start;
     }
-
-    let mut data = cnn::filter_cpu(img.data, img.width + img.padding * 2,
-                                   img.height + img.padding * 2, img.strides[0], &model);
-    let new_padding = img.padding - model.len();
-    let h = img.height;
-    let w = img.width;
-    let stride = data[0].len() / (h + new_padding * 2);
-
-    while copy_components.len() > 0 {
-        let mut v = copy_components.remove(0);
-        for y in 0..h + new_padding * 2 {
-            let off_src = (y + (img.padding - new_padding)) * img.strides[0] + (img.padding - new_padding);
-            let off_dst = y * stride;
-            for x in 0..w + new_padding * 2 {
-                v[off_dst + x] = v[off_src + x];
-            }
-        }
-        v.truncate((h + new_padding * 2) * stride);
-        data.push(v);
-    }
-
-    image::Image {
-        width: w,
-        height: h,
-        color_space: img.color_space.clone(),
-        data: data,
-        strides: vec![stride, stride, stride],
-        padding: new_padding,
-        alignment: 1,
-    }
+    output
 }
 
 fn path_to_image_format(path: &String) -> piston_image::ImageFormat {
@@ -156,4 +152,10 @@ fn path_to_image_format(path: &String) -> piston_image::ImageFormat {
 fn print_usage(program: &str, opts: Options) {
     let brief = format!("Usage: {} [options]", program);
     print!("{}", opts.usage(&brief));
+}
+
+pub struct PerfStatus {
+    pub cnn_flo: u64,
+    pub cnn_time: f64,
+    pub other_time: f64,
 }

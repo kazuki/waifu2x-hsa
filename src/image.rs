@@ -10,8 +10,6 @@ pub struct Image {
     pub color_space: ColorSpace,
     pub data: Vec<Vec<f32>>,
     pub strides: Vec<usize>,
-    pub padding: usize,
-    pub alignment: usize,
 }
 
 #[derive(PartialEq, Clone)]
@@ -21,14 +19,11 @@ pub enum ColorSpace {
 }
 
 impl Image {
-    pub fn from_dynamic_image(img: &piston_image::DynamicImage,
-                              padding: usize, alignment: usize) -> Image {
+    pub fn from_dynamic_image(img: &piston_image::DynamicImage) -> Image {
         let rgb_img = img.to_rgb();
         let w = img.width() as usize;
         let h = img.height() as usize;
-        let stride = _align(w + padding * 2, alignment);
-        let stride_h = _align(h + padding * 2, alignment);
-        let vec_size = stride * stride_h;
+        let vec_size = w * h;
         let mut r: Vec<f32> = Vec::with_capacity(vec_size);
         let mut g: Vec<f32> = Vec::with_capacity(vec_size);
         let mut b: Vec<f32> = Vec::with_capacity(vec_size);
@@ -39,12 +34,11 @@ impl Image {
         }
         let src = rgb_img.into_raw();
         for y in 0..h {
-            let off_src = y * w;
-            let off_dst = (padding + y) * stride + padding;
+            let off = y * w;
             for x in 0..w {
-                r[off_dst + x] = (src[(off_src + x) * 3 + 0] as f32) / 255.0;
-                g[off_dst + x] = (src[(off_src + x) * 3 + 1] as f32) / 255.0;
-                b[off_dst + x] = (src[(off_src + x) * 3 + 2] as f32) / 255.0;
+                r[off + x] = (src[(off + x) * 3 + 0] as f32) / 255.0;
+                g[off + x] = (src[(off + x) * 3 + 1] as f32) / 255.0;
+                b[off + x] = (src[(off + x) * 3 + 2] as f32) / 255.0;
             }
         }
         Image {
@@ -52,9 +46,7 @@ impl Image {
             height: h,
             color_space: ColorSpace::RGB,
             data: vec![r, g, b],
-            strides: vec![stride, stride, stride],
-            padding: padding,
-            alignment: alignment,
+            strides: vec![w, w, w],
         }
     }
 
@@ -71,7 +63,7 @@ impl Image {
         let s1 = &self.data[1];
         let s2 = &self.data[2];
         for i in 0..self.height {
-            let off = (i + self.padding) * self.strides[0] + self.padding;
+            let off = i * self.strides[0];
             for j in 0..self.width {
                 let r = std::cmp::min(255, std::cmp::max(0, (s0[off + j] * 255.0) as i32));
                 let g = std::cmp::min(255, std::cmp::max(0, (s1[off + j] * 255.0) as i32));
@@ -84,17 +76,17 @@ impl Image {
         dimg
     }
 
-    pub fn scale2x(&self, padding: usize, alignment: usize) -> Image {
+    pub fn scale2x(&self) -> Image {
         let mut data: Vec<Vec<f32>> = Vec::with_capacity(self.data.len());
-        let stride = _align(self.width * 2 + padding * 2, alignment);
-        let stride_h = _align(self.height * 2 + padding * 2, alignment);
+        let stride = self.width * 2;
+        let stride_h = self.height * 2;
 
         for v in self.data.iter() {
             let mut x: Vec<f32> = Vec::with_capacity(stride * stride_h);
             unsafe { x.set_len(stride * stride_h); }
             for y in 0..self.height {
-                let off_src = (y + self.padding) * self.strides[0] + self.padding;
-                let off_dst = padding * stride + y * stride * 2 + padding;
+                let off_src = y * self.strides[0];
+                let off_dst = y * stride * 2;
                 for i in 0..self.width {
                     let t = v[off_src + i];
                     x[off_dst + i * 2 + 0] = t;
@@ -112,36 +104,65 @@ impl Image {
             color_space: self.color_space.clone(),
             data: data,
             strides: vec![stride, stride, stride],
-            padding: padding,
-            alignment: alignment,
         }
     }
 
-    pub fn fill_padding_area(&mut self) {
+    pub fn add_padding(&self, padding: usize) -> Image {
+        let mut data: Vec<Vec<f32>> = Vec::with_capacity(self.data.len());
+        let mut strides = Vec::new();
+        let stride = self.width + padding * 2;
+        let stride_h = self.height + padding * 2;
+
+        for v in self.data.iter() {
+            let mut x: Vec<f32> = Vec::with_capacity(stride * stride_h);
+            unsafe { x.set_len(stride * stride_h); }
+            for y in 0..self.height {
+                let off_src = y * self.strides[0];
+                let off_dst = (padding + y) * stride + padding;
+                for i in 0..self.width {
+                    x[off_dst + i] = v[off_src + i];
+                }
+            }
+            data.push(x);
+            strides.push(stride);
+        }
+
+        let mut out = Image {
+            width: stride,
+            height: stride_h,
+            color_space: self.color_space.clone(),
+            data: data,
+            strides: strides,
+        };
+        out.fill_padding_area(padding);
+        out
+    }
+
+    fn fill_padding_area(&mut self, padding: usize) {
         for k in 0..self.data.len() {
             let x = &mut self.data[k];
             let stride = self.strides[k];
 
-            let off_lt = self.padding * stride + self.padding;
-            let off_rt = off_lt + self.width - 1;
-            let off_lb = (self.padding + self.height - 1) * stride + self.padding;
-            let off_rb = off_lb + self.width - 1;
+            let off_lt = padding * stride + padding;
+            let off_rt = off_lt + self.width - padding * 2 - 1;
+            let off_lb = (self.height - padding - 1) * stride + padding;
+            let off_rb = off_lb + self.width - padding * 2 - 1;
 
-            for i in 0..self.width {
+            for i in 0..self.width - padding * 2{
                 let vt = x[off_lt + i];
                 let vb = x[off_lb + i];
-                for j in 0..self.padding {
-                    x[j * stride + self.padding + i] = vt;
+                for j in 0..padding {
+                    x[j * stride + padding + i] = vt;
                     x[off_lb + (j + 1) * stride + i] = vb;
                 }
             }
 
-            for i in 0..self.height {
+            for i in 0..self.height - padding * 2 {
                 let vl = x[off_lt + i * stride];
                 let vr = x[off_rt + i * stride];
-                for j in 0..self.padding {
-                    x[off_lt + i * stride - j] = vl;
-                    x[off_rt + i * stride + j] = vr;
+                for j in 0..padding {
+                    x[off_lt + i * stride - (j + 1)] = vl;
+                    x[off_rt + i * stride + (j + 1)] = vr;
                 }
             }
 
@@ -149,8 +170,8 @@ impl Image {
             let vrt = x[off_rt];
             let vlb = x[off_lb];
             let vrb = x[off_rb];
-            for i in 0..self.padding {
-                for j in 0..self.padding {
+            for i in 0..padding {
+                for j in 0..padding {
                     x[off_lt - (i + 1) * stride - (j + 1)] = vlt;
                     x[off_rt - (i + 1) * stride + (j + 1)] = vrt;
                     x[off_lb + (i + 1) * stride - (j + 1)] = vlb;
@@ -208,13 +229,5 @@ impl Image {
             d[2][i] = (y + 1.772 * (u - 128.0)) / 255.0;
         }
         self.color_space = ColorSpace::RGB;
-    }
-}
-
-fn _align(x: usize, alignment: usize) -> usize {
-    if x % alignment != 0 {
-        x + (alignment - (x % alignment))
-    } else {
-        x
     }
 }

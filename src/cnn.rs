@@ -1,13 +1,14 @@
+use image::Image;
 use model::Model;
+use super::PerfStatus;
 
-pub fn filter_cpu(in_feature_maps: Vec<Vec<f32>>, padded_width: usize,
-                  padded_height: usize, stride: usize, model: &Model) -> Vec<Vec<f32>> {
+pub fn filter_cpu(in_img: Image, model: &Model, perf: &mut PerfStatus) -> Image {
 
     let mut in_maps: Vec<Vec<f32>> = Vec::new();
-    let mut out_maps = in_feature_maps;
-    let mut width = padded_width;
-    let mut width_stride = stride;
-    let mut height = padded_height;
+    let mut out_maps = in_img.data;
+    let mut width = in_img.width;
+    let mut width_stride = in_img.strides[0];
+    let mut height = in_img.height;
     
     for layer in model.iter() {
         in_maps = out_maps;
@@ -61,7 +62,20 @@ pub fn filter_cpu(in_feature_maps: Vec<Vec<f32>>, padded_width: usize,
         width = new_width;
         height = new_height;
         width_stride = width;
+        perf.cnn_flo +=
+            ((layer.nInputPlane * layer.nOutputPlane * layer.kW * layer.kH * 2) as u64 * (width * height) as u64) +
+            (layer.nOutputPlane as u64 * width as u64 * height as u64);
     }
 
-    out_maps
+    let mut out_strides = Vec::new();
+    for _ in 0..out_maps.len() {
+        out_strides.push(width_stride);
+    }
+    Image {
+        width: width,
+        height: height,
+        color_space: in_img.color_space.clone(),
+        data: out_maps,
+        strides: out_strides,
+    }
 }

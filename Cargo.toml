@@ -8,6 +8,7 @@ authors = ["Kazuki Oikawa <k@oikw.org>"]
 getopts = "*"
 image = "*"
 rustc-serialize = "*"
+time = "*"
 
 [dependencies.hsa]
 git = "https://github.com/kazuki/rust-hsa.git"
