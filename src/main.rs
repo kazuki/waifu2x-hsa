@@ -1,3 +1,5 @@
+#![feature(step_by)]
+
 extern crate getopts;
 extern crate rustc_serialize;
 extern crate image as piston_image;
@@ -98,13 +100,16 @@ fn main() {
         }
     };
 
+    let total_time = time::precise_time_s() - start;
+
     let mut out_strm = File::create(&out_path).unwrap();
     out_img.to_dynamic_image().save(&mut out_strm, out_img_format).unwrap();
 
-    println!("total: {:.2} [ms]", perf.other_time * 1000.0);
-    println!("cnn: {:.2} [GFLOPS], {:.2} [ms]",
+    println!("total: {:.2} [ms]", total_time * 1000.0);
+    println!("cnn: {:.2} [GFLOPS], {:.2} [ms] ({:.2} G fp-ops)",
              (perf.cnn_flo as f64) / 1000000000.0 / perf.cnn_time,
-             perf.cnn_time * 1000.0);
+             perf.cnn_time * 1000.0, perf.cnn_flo as f64 / 1000000000.0);
+    println!("other: {:.2} [ms]", perf.other_time * 1000.0);
 }
 
 fn scale2(img: image::Image, model: &model::Model, perf: &mut PerfStatus) -> image::Image {
@@ -124,7 +129,7 @@ fn filter(mut img: image::Image, model: &model::Model, perf: &mut PerfStatus) ->
     perf.other_time += time::precise_time_s() - start;
 
     start = time::precise_time_s();
-    let mut output = cnn::filter_cpu(padded, &model, perf);
+    let mut output = cnn::filter_cpu2(padded, &model, perf);
     perf.cnn_time += time::precise_time_s() - start;
 
     if output.data.len() == 1 {
