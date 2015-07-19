@@ -10,7 +10,7 @@ pub fn filter_cpu1(in_img: Image, model: &Model, perf: &mut PerfStatus) -> Image
     let mut width = in_img.width;
     let mut width_stride = in_img.strides[0];
     let mut height = in_img.height;
-    
+
     for layer in model.iter() {
         let new_width = width - 2;
         let new_height = height - 2;
@@ -110,7 +110,7 @@ pub fn filter_cpu2(in_img: Image, model: &Model, perf: &mut PerfStatus) -> Image
     {
         let cnt = model[0].nInputPlane as usize;
         for y in 0..in_img.height {
-            let off = stride * y * cnt;
+            let off = stride * y;
             for i in 0..cnt {
                 let src_off = in_img.strides[i] * y;
                 for x in 0..in_img.width {
