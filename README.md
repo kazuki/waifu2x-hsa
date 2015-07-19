@@ -24,6 +24,7 @@ waifu2xをHSAで動かす予定！
 |:---|:---|:------|:-------|:-----|
 |03da5c565067765fdada59620769efb1d81955d5|Haswell|1|38400|2.1|
 |7c8f1065a63bf93f1e83ebadb7865f06501f3039|Haswell|1|13693|6.1|
+|fd100839199c80d61de8f6e74126541510bd4967|Haswell|1|10077|8.44|
 |waifu2x-converter-cpp|Haswell|1|2314|38|
 |waifu2x-converter-cpp|Haswell|6|548|163|
 |waifu2x-converter-cpp|Haswell|12|371|239|
